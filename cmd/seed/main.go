@@ -1,13 +1,14 @@
 package main
 
 import (
-	"context"
 	"log"
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/barsboldb/ascend-backend/internal/model"
+	"github.com/google/uuid"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 type exerciseDef struct {
@@ -377,110 +378,97 @@ var sessionDefs = []sessionDef{
 }
 
 func main() {
-	ctx := context.Background()
-
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		log.Fatal("DATABASE_URL not set")
 	}
 
-	pool, err := pgxpool.New(ctx, dbURL)
+	db, err := gorm.Open(postgres.Open(dbURL), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("connect: %v", err)
 	}
-	defer pool.Close()
 
 	// Clear existing seed data
-	_, err = pool.Exec(ctx, "TRUNCATE exercises, programs CASCADE")
-	if err != nil {
-		log.Fatalf("truncate: %v", err)
-	}
+	db.Exec("TRUNCATE exercises, programs CASCADE")
 
 	// 1. Insert exercises
-	exerciseIDs := make(map[string]pgtype.UUID)
+	exerciseIDs := make(map[string]uuid.UUID)
 	for _, e := range exerciseDefs {
-		var id pgtype.UUID
-		err := pool.QueryRow(ctx,
-			"INSERT INTO exercises (name, muscle_group, equipment) VALUES ($1, $2, $3) RETURNING id",
-			e.name, e.muscleGroup, e.equipment,
-		).Scan(&id)
-		if err != nil {
+		mg := e.muscleGroup
+		eq := e.equipment
+		exercise := model.Exercise{
+			Name:        e.name,
+			MuscleGroup: &mg,
+			Equipment:   &eq,
+		}
+		if err := db.Create(&exercise).Error; err != nil {
 			log.Fatalf("insert exercise %s: %v", e.name, err)
 		}
-		exerciseIDs[e.name] = id
+		exerciseIDs[e.name] = exercise.ID
 	}
 	log.Printf("inserted %d exercises", len(exerciseIDs))
 
-	// 2. Insert program
-	var programID pgtype.UUID
-	err = pool.QueryRow(ctx,
-		"INSERT INTO programs (name, description, total_weeks) VALUES ($1, $2, $3) RETURNING id",
-		"PPL A/B Split", "Push Pull Legs alternating A/B program", 9,
-	).Scan(&programID)
-	if err != nil {
+	// 2. Insert program with days
+	desc := "Push Pull Legs alternating A/B program"
+	weeks := int32(9)
+	program := model.Program{
+		Name:        "PPL A/B Split",
+		Description: &desc,
+		TotalWeeks:  &weeks,
+		Days: []model.ProgramDay{
+			{WeekNumber: 1, DayNumber: 1, Label: "Push A"},
+			{WeekNumber: 1, DayNumber: 2, Label: "Pull A"},
+			{WeekNumber: 1, DayNumber: 3, Label: "Leg A"},
+			{WeekNumber: 2, DayNumber: 1, Label: "Push B"},
+			{WeekNumber: 2, DayNumber: 2, Label: "Pull B"},
+			{WeekNumber: 2, DayNumber: 3, Label: "Leg B"},
+		},
+	}
+	if err := db.Create(&program).Error; err != nil {
 		log.Fatalf("insert program: %v", err)
 	}
 
-	// 3. Insert program days
-	type programDay struct {
-		key    string
-		weekNum, dayNum int
-		label  string
-	}
-	programDays := []programDay{
-		{"push_a", 1, 1, "Push A"},
-		{"pull_a", 1, 2, "Pull A"},
-		{"leg_a", 1, 3, "Leg A"},
-		{"push_b", 2, 1, "Push B"},
-		{"pull_b", 2, 2, "Pull B"},
-		{"leg_b", 2, 3, "Leg B"},
+	dayIDs := make(map[string]uuid.UUID)
+	for _, day := range program.Days {
+		dayIDs[day.Label] = day.ID
 	}
 
-	dayIDs := make(map[string]pgtype.UUID)
-	for _, pd := range programDays {
-		var id pgtype.UUID
-		err := pool.QueryRow(ctx,
-			"INSERT INTO program_days (program_id, week_number, day_number, label) VALUES ($1, $2, $3, $4) RETURNING id",
-			programID, pd.weekNum, pd.dayNum, pd.label,
-		).Scan(&id)
-		if err != nil {
-			log.Fatalf("insert program day %s: %v", pd.label, err)
-		}
-		dayIDs[pd.key] = id
+	labelByKey := map[string]string{
+		"push_a": "Push A", "pull_a": "Pull A", "leg_a": "Leg A",
+		"push_b": "Push B", "pull_b": "Pull B", "leg_b": "Leg B",
 	}
 
-	// 4. Insert sessions and exercise sets
+	// 3. Insert sessions and exercise sets
 	for _, s := range sessionDefs {
-		dayID := dayIDs[s.dayKey]
+		dayID := dayIDs[labelByKey[s.dayKey]]
 
-		var sessionID pgtype.UUID
-		err := pool.QueryRow(ctx,
-			"INSERT INTO sessions (program_day_id, week_number, started_at) VALUES ($1, $2, $3) RETURNING id",
-			dayID, s.weekNum, s.date,
-		).Scan(&sessionID)
-		if err != nil {
-			log.Fatalf("insert session %s: %v", s.date.Format("2006-01-02"), err)
+		session := model.Session{
+			ProgramDayID: dayID,
+			WeekNumber:   int32(s.weekNum),
+			StartedAt:    s.date,
 		}
 
-		setNumberByExercise := make(map[pgtype.UUID]int)
+		setNumberByExercise := make(map[uuid.UUID]int32)
 		for _, setGroup := range s.sets {
 			exID, ok := exerciseIDs[setGroup.exercise]
 			if !ok {
 				log.Fatalf("unknown exercise %q in session %s", setGroup.exercise, s.date.Format("2006-01-02"))
 			}
-
 			for i := 0; i < setGroup.numSets; i++ {
 				setNumberByExercise[exID]++
-				isFailure := setGroup.failure && i == setGroup.numSets-1
-
-				_, err := pool.Exec(ctx,
-					"INSERT INTO exercise_sets (session_id, exercise_id, set_number, weight_kg, reps, failure, logged_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-					sessionID, exID, setNumberByExercise[exID], setGroup.weightKg, setGroup.reps, isFailure, s.date,
-				)
-				if err != nil {
-					log.Fatalf("insert set %s %s: %v", s.date.Format("2006-01-02"), setGroup.exercise, err)
-				}
+				session.ExerciseSets = append(session.ExerciseSets, model.ExerciseSet{
+					ExerciseID: exID,
+					SetNumber:  setNumberByExercise[exID],
+					WeightKg:   setGroup.weightKg,
+					Reps:       int32(setGroup.reps),
+					Failure:    setGroup.failure && i == setGroup.numSets-1,
+					LoggedAt:   s.date,
+				})
 			}
+		}
+
+		if err := db.Create(&session).Error; err != nil {
+			log.Fatalf("insert session %s: %v", s.date.Format("2006-01-02"), err)
 		}
 	}
 
