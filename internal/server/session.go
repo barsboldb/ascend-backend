@@ -2,22 +2,24 @@ package server
 
 import (
 	"context"
+	"errors"
 
 	pb "github.com/barsboldb/ascend-backend/gen/session"
-  "google.golang.org/protobuf/types/known/timestamppb"
-	"github.com/barsboldb/ascend-backend/internal/db"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/barsboldb/ascend-backend/internal/model"
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
+	"gorm.io/gorm"
 )
 
 type SessionServer struct {
 	pb.UnimplementedSessionServiceServer
-	queries *db.Queries
+	db *gorm.DB
 }
 
-func NewSessionServer(queries *db.Queries) *SessionServer {
-	return &SessionServer{queries: queries}
+func NewSessionServer(db *gorm.DB) *SessionServer {
+	return &SessionServer{db: db}
 }
 
 func (s *SessionServer) GetSession(ctx context.Context, req *pb.GetSessionRequest) (*pb.GetSessionResponse, error) {
@@ -25,21 +27,47 @@ func (s *SessionServer) GetSession(ctx context.Context, req *pb.GetSessionReques
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
 
-	var id pgtype.UUID
-	if err := id.Scan(req.Id); err != nil {
+	id, err := uuid.Parse(req.Id)
+	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid UUID format")
 	}
 
-	session, err := s.queries.GetSession(ctx, id)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "workout not found: %v", err)
+	var session model.Session
+	result := s.db.WithContext(ctx).
+		Preload("ExerciseSets.Exercise").
+		First(&session, id)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return nil, status.Error(codes.NotFound, "session not found")
+	}
+	if result.Error != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get session: %v", result.Error)
 	}
 
-	return &pb.GetSessionResponse{
-		Id:              session.ID.String(),
-		ProgramDayId:    session.ProgramDayID.String(),
-		WeekNumber:      session.WeekNumber,
-    StartedAt:       timestamppb.New(session.StartedAt.Time),
-    EndedAt:         timestamppb.New(session.EndedAt.Time),
-	}, nil
+	pbSets := make([]*pb.ExerciseSet, len(session.ExerciseSets))
+	for i, set := range session.ExerciseSets {
+		pbSets[i] = &pb.ExerciseSet{
+			ExerciseId:   set.ExerciseID.String(),
+			ExerciseName: set.Exercise.Name,
+			SetNumber:    set.SetNumber,
+			WeightKg:     float32(set.WeightKg),
+			Reps:         set.Reps,
+			Failure:      set.Failure,
+		}
+	}
+
+	resp := &pb.GetSessionResponse{
+		Id:           session.ID.String(),
+		ProgramDayId: session.ProgramDayID.String(),
+		WeekNumber:   session.WeekNumber,
+		StartedAt:    timestamppb.New(session.StartedAt),
+		ExerciseSets: pbSets,
+	}
+	if session.EndedAt != nil {
+		resp.EndedAt = timestamppb.New(*session.EndedAt)
+	}
+	if session.Notes != nil {
+		resp.Notes = *session.Notes
+	}
+
+	return resp, nil
 }
