@@ -22,6 +22,11 @@ func NewSessionServer(db *gorm.DB) *SessionServer {
 	return &SessionServer{db: db}
 }
 
+type ExerciseWithSets struct {
+  Exercise model.Exercise
+  Sets     []model.ExerciseSet
+}
+
 func (s *SessionServer) GetSession(ctx context.Context, req *pb.GetSessionRequest) (*pb.GetSessionResponse, error) {
 	if req.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
@@ -43,24 +48,42 @@ func (s *SessionServer) GetSession(ctx context.Context, req *pb.GetSessionReques
 		return nil, status.Errorf(codes.Internal, "failed to get session: %v", result.Error)
 	}
 
-	pbSets := make([]*pb.ExerciseSet, len(session.ExerciseSets))
-	for i, set := range session.ExerciseSets {
-		pbSets[i] = &pb.ExerciseSet{
-			ExerciseId:   set.ExerciseID.String(),
-			ExerciseName: set.Exercise.Name,
-			SetNumber:    set.SetNumber,
-			WeightKg:     float32(set.WeightKg),
-			Reps:         set.Reps,
-			Failure:      set.Failure,
-		}
-	}
+  grouped := make(map[uuid.UUID]*ExerciseWithSets)
+  var order []uuid.UUID
+
+  for _, set := range session.ExerciseSets {
+    if _, ok := grouped[set.ExerciseID]; !ok {
+      grouped[set.ExerciseID] = &ExerciseWithSets{Exercise: set.Exercise}
+      order = append(order, set.ExerciseID)
+    }
+    grouped[set.ExerciseID].Sets = append(grouped[set.ExerciseID].Sets, set)
+  }
+
+  pbExercises := make([]*pb.SessionExercise, len(order))
+  for i, exID := range order {
+    g := grouped[exID]
+    pbSets := make([]*pb.ExerciseSet, len(g.Sets))
+    for j, set := range g.Sets {
+      pbSets[j] = &pb.ExerciseSet{
+        SetNumber: set.SetNumber,
+        WeightKg:  float32(set.WeightKg),
+        Reps:      set.Reps,
+        Failure:   set.Failure,
+      }
+    }
+    pbExercises[i] = &pb.SessionExercise{
+      ExerciseId:   exID.String(),
+      ExerciseName: g.Exercise.Name,
+      Sets:         pbSets,
+    }
+  }
 
 	resp := &pb.GetSessionResponse{
 		Id:           session.ID.String(),
 		ProgramDayId: session.ProgramDayID.String(),
 		WeekNumber:   session.WeekNumber,
 		StartedAt:    timestamppb.New(session.StartedAt),
-		ExerciseSets: pbSets,
+		Exercises:    pbExercises,
 	}
 	if session.EndedAt != nil {
 		resp.EndedAt = timestamppb.New(*session.EndedAt)
