@@ -409,8 +409,8 @@ func main() {
 	log.Printf("inserted %d exercises", len(exerciseIDs))
 
 	// 2. Insert program with days
-	desc := "Push Pull Legs alternating A/B program"
-	weeks := int32(9)
+	desc := "12-Week PPL Muscle Building Program for Ectomorphs"
+	weeks := int32(12)
 	program := model.Program{
 		Name:        "PPL A/B Split",
 		Description: &desc,
@@ -419,9 +419,10 @@ func main() {
 			{WeekNumber: 1, DayNumber: 1, Label: "Push A"},
 			{WeekNumber: 1, DayNumber: 2, Label: "Pull A"},
 			{WeekNumber: 1, DayNumber: 3, Label: "Leg A"},
-			{WeekNumber: 2, DayNumber: 1, Label: "Push B"},
-			{WeekNumber: 2, DayNumber: 2, Label: "Pull B"},
-			{WeekNumber: 2, DayNumber: 3, Label: "Leg B"},
+			{WeekNumber: 1, DayNumber: 4, Label: "Push B"},
+			{WeekNumber: 1, DayNumber: 5, Label: "Pull B"},
+			{WeekNumber: 1, DayNumber: 6, Label: "Leg B"},
+			{WeekNumber: 1, DayNumber: 7, Label: "Rest"},
 		},
 	}
 	if err := db.Create(&program).Error; err != nil {
@@ -432,6 +433,86 @@ func main() {
 	for _, day := range program.Days {
 		dayIDs[day.Label] = day.ID
 	}
+
+	// 3. Insert program exercises
+	type pe struct {
+		day      string
+		exercise string
+		position int32
+		sets     int32
+		repMin   int32
+		repMax   int32
+		isAmrap  bool
+		isTimed  bool
+	}
+
+	programExercises := []pe{
+		// Push A — Bench Press Focus
+		{"Push A", "Bench Press", 1, 4, 6, 8, false, false},
+		{"Push A", "Incline Dumbbell Press", 2, 3, 8, 10, false, false},
+		{"Push A", "Shoulder Press", 3, 3, 10, 12, false, false},
+		{"Push A", "Overhead Tricep Extension", 4, 3, 10, 12, false, false},
+		{"Push A", "Lateral Raises", 5, 3, 12, 15, false, false},
+		{"Push A", "Cable Pushdown", 6, 2, 12, 15, false, false},
+		// Pull A — Row Focus
+		{"Pull A", "Barbell Row", 1, 4, 6, 8, false, false},
+		{"Pull A", "Lat Pulldown", 2, 3, 8, 10, false, false},
+		{"Pull A", "Face Pulls", 3, 3, 12, 15, false, false},
+		{"Pull A", "Barbell Curl", 4, 3, 8, 10, false, false},
+		{"Pull A", "Hammer Curls", 5, 3, 10, 12, false, false},
+		{"Pull A", "Rear Delt Fly", 6, 2, 12, 15, false, false},
+		// Leg A — Squat Focus
+		{"Leg A", "Back Squat", 1, 4, 6, 8, false, false},
+		{"Leg A", "Romanian Deadlift", 2, 3, 8, 10, false, false},
+		{"Leg A", "Leg Press", 3, 3, 10, 12, false, false},
+		{"Leg A", "Leg Curls", 4, 3, 10, 12, false, false},
+		{"Leg A", "Standing Calf Raises", 5, 3, 12, 15, false, false},
+		{"Leg A", "Hanging Leg Raises", 6, 3, 10, 15, false, false},
+		{"Leg A", "Dead Bug", 7, 2, 10, 10, false, false},
+		// Push B — Overhead Press Focus
+		{"Push B", "Overhead Barbell Press", 1, 4, 6, 8, false, false},
+		{"Push B", "Flat Dumbbell Press", 2, 3, 8, 10, false, false},
+		{"Push B", "Cable Flyes", 3, 3, 10, 12, false, false},
+		{"Push B", "Skull Crushers", 4, 3, 10, 12, false, false},
+		{"Push B", "Lateral Raises", 5, 3, 12, 15, false, false},
+		{"Push B", "Close Grip Bench Press", 6, 2, 8, 10, false, false},
+		// Pull B — Vertical Pull Focus
+		{"Pull B", "Pull Up", 1, 4, 0, 0, true, false},
+		{"Pull B", "Seated Cable Row", 2, 3, 8, 10, false, false},
+		{"Pull B", "Single Arm Dumbbell Row", 3, 3, 10, 12, false, false},
+		{"Pull B", "Inclined Dumbbell Curl", 4, 3, 10, 12, false, false},
+		{"Pull B", "Preacher Curl", 5, 3, 10, 12, false, false},
+		{"Pull B", "Face Pulls", 6, 2, 15, 15, false, false},
+		// Leg B — Deadlift Focus
+		{"Leg B", "Conventional Deadlift", 1, 4, 5, 6, false, false},
+		{"Leg B", "Front Squat", 2, 3, 8, 10, false, false},
+		{"Leg B", "Walking Lunges", 3, 3, 10, 10, false, false},
+		{"Leg B", "Leg Curls", 4, 3, 10, 12, false, false},
+		{"Leg B", "Seated Calf Raises", 5, 3, 15, 20, false, false},
+		{"Leg B", "Plank", 6, 3, 30, 60, false, true},
+		{"Leg B", "Pallof Press", 7, 2, 10, 10, false, false},
+	}
+
+	for _, p := range programExercises {
+		exID, ok := exerciseIDs[p.exercise]
+		if !ok {
+			log.Fatalf("unknown exercise %q in program day %s", p.exercise, p.day)
+		}
+		pe := model.ProgramExercise{
+			ProgramDayID: dayIDs[p.day],
+			ExerciseID:   exID,
+			Position:     p.position,
+			Sets:         p.sets,
+			RepMin:       p.repMin,
+			RepMax:       p.repMax,
+			IsAmrap:      p.isAmrap,
+			IsTimed:      p.isTimed,
+		}
+		if err := db.Create(&pe).Error; err != nil {
+			log.Fatalf("insert program exercise %s %s: %v", p.day, p.exercise, err)
+		}
+	}
+	log.Printf("inserted %d program exercises", len(programExercises))
 
 	labelByKey := map[string]string{
 		"push_a": "Push A", "pull_a": "Pull A", "leg_a": "Leg A",
