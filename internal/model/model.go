@@ -40,7 +40,9 @@ type ProgramExercise struct {
 	RepMin          int32     `gorm:"not null"`
 	RepMax          int32     `gorm:"not null"`
 	WeightIncrement *float64
-	Exercise        Exercise `gorm:"foreignKey:ExerciseID"`
+	IsAmrap         bool      `gorm:"default:false"`
+	IsTimed         bool      `gorm:"default:false"`
+	Exercise        Exercise  `gorm:"foreignKey:ExerciseID"`
 }
 
 type Session struct {
