@@ -98,7 +98,7 @@ func (s *ProgramServer) GetProgramDay(ctx context.Context, req *pb.GetProgramDay
     }
 
     pbExercises[i] = &pb.ProgramExercise{
-      Id:               e.ID.String(),
+      Id:               e.Exercise.ID.String(),
       Name:             e.Exercise.Name,
       MuscleGroup:     *e.Exercise.MuscleGroup,
       Sets:             e.Sets,
