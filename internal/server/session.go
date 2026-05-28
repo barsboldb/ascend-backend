@@ -150,6 +150,7 @@ func (s *SessionServer) GetLastSetsForExercise(ctx context.Context, req *pb.GetL
       WeightKg:     float32(set.WeightKg),
       Reps:         set.Reps,
       Failure:      set.Failure,
+      Rpe:          set.Rpe,
     }
   }
 

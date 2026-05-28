@@ -36,6 +36,7 @@ func SessionToPB(session *model.Session) (*pb.SessionWithExercises) {
         WeightKg:  float32(set.WeightKg),
         Reps:      set.Reps,
         Failure:   set.Failure,
+        Rpe:       set.Rpe,
       }
     }
     pbExercises[i] = &pb.SessionExercise{
@@ -72,6 +73,7 @@ func PBToSession(sessionPB *pb.CreateSessionRequest) (*model.Session) {
       WeightKg:   float64(e.WeightKg),
       Reps:       e.Reps,
       Failure:    e.Failure,
+      Rpe:        e.Rpe,
     }
   }
 

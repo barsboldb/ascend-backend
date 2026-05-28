@@ -63,6 +63,7 @@ type ExerciseSet struct {
 	WeightKg   float64   `gorm:"not null"`
 	Reps       int32     `gorm:"not null"`
 	Failure    bool      `gorm:"default:false"`
+	Rpe        *int32
 	LoggedAt   time.Time
 	Exercise   Exercise `gorm:"foreignKey:ExerciseID"`
 }
