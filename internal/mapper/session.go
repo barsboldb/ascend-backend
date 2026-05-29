@@ -32,6 +32,7 @@ func SessionToPB(session *model.Session) (*pb.SessionWithExercises) {
     pbSets := make([]*pb.ExerciseSet, len(g.Sets))
     for j, set := range g.Sets {
       pbSets[j] = &pb.ExerciseSet{
+        Id:        set.ID.String(),
         SetNumber: set.SetNumber,
         WeightKg:  float32(set.WeightKg),
         Reps:      set.Reps,

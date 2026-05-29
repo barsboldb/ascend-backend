@@ -144,6 +144,7 @@ func (s *SessionServer) GetLastSetsForExercise(ctx context.Context, req *pb.GetL
   for i, set := range sets {
     exerciseName = set.Exercise.Name
     pbSets[i] = &pb.ExerciseSet{
+      Id:           set.ID.String(),
       ExerciseId:   set.ExerciseID.String(),
       ExerciseName: set.Exercise.Name,
       SetNumber:    set.SetNumber,
@@ -160,5 +161,78 @@ func (s *SessionServer) GetLastSetsForExercise(ctx context.Context, req *pb.GetL
     Sets:         pbSets,
     PerformedAt:  timestamppb.New(session.StartedAt),
     Found:        true,
+  }, nil
+}
+
+func (s *SessionServer) DeleteSession(ctx context.Context, req *pb.DeleteSessionRequest) (*pb.DeleteSessionResponse, error) {
+  if req.Id == "" {
+    return nil, status.Error(codes.InvalidArgument, "id is required")
+  }
+  id, err := uuid.Parse(req.Id)
+  if err != nil {
+    return nil, status.Error(codes.InvalidArgument, "invalid session id UUID")
+  }
+
+  err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+    if err := tx.Where("session_id = ?", id).Delete(&model.ExerciseSet{}).Error; err != nil {
+      return err
+    }
+    result := tx.Delete(&model.Session{}, id)
+    if result.Error != nil {
+      return result.Error
+    }
+    if result.RowsAffected == 0 {
+      return gorm.ErrRecordNotFound
+    }
+    return nil
+  })
+
+  if errors.Is(err, gorm.ErrRecordNotFound) {
+    return nil, status.Error(codes.NotFound, "session not found")
+  }
+  if err != nil {
+    return nil, status.Errorf(codes.Internal, "failed to delete session: %v", err)
+  }
+  return &pb.DeleteSessionResponse{}, nil
+}
+
+func (s *SessionServer) UpdateExerciseSet(ctx context.Context, req *pb.UpdateExerciseSetRequest) (*pb.ExerciseSet, error) {
+  if req.Id == "" {
+    return nil, status.Error(codes.InvalidArgument, "id is required")
+  }
+  id, err := uuid.Parse(req.Id)
+  if err != nil {
+    return nil, status.Error(codes.InvalidArgument, "invalid set id UUID")
+  }
+
+  updates := map[string]any{
+    "weight_kg": float64(req.WeightKg),
+    "reps":      req.Reps,
+    "failure":   req.Failure,
+    "rpe":       req.Rpe,
+  }
+
+  result := s.db.WithContext(ctx).Model(&model.ExerciseSet{}).Where("id = ?", id).Updates(updates)
+  if result.Error != nil {
+    return nil, status.Errorf(codes.Internal, "failed to update set: %v", result.Error)
+  }
+  if result.RowsAffected == 0 {
+    return nil, status.Error(codes.NotFound, "set not found")
+  }
+
+  var set model.ExerciseSet
+  if err := s.db.WithContext(ctx).Preload("Exercise").First(&set, id).Error; err != nil {
+    return nil, status.Errorf(codes.Internal, "failed to reload set: %v", err)
+  }
+
+  return &pb.ExerciseSet{
+    Id:           set.ID.String(),
+    ExerciseId:   set.ExerciseID.String(),
+    ExerciseName: set.Exercise.Name,
+    SetNumber:    set.SetNumber,
+    WeightKg:     float32(set.WeightKg),
+    Reps:         set.Reps,
+    Failure:      set.Failure,
+    Rpe:          set.Rpe,
   }, nil
 }
