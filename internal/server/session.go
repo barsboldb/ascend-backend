@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	pb "github.com/barsboldb/ascend-backend/gen/session"
+	authpkg "github.com/barsboldb/ascend-backend/internal/auth"
 	"github.com/barsboldb/ascend-backend/internal/mapper"
 	"github.com/barsboldb/ascend-backend/internal/model"
 	"github.com/barsboldb/ascend-backend/internal/validate"
@@ -15,6 +16,14 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 )
+
+func userIDFromContext(ctx context.Context) (uuid.UUID, error) {
+	userID, ok := ctx.Value(authpkg.UserIDKey).(uuid.UUID)
+	if !ok {
+		return uuid.Nil, status.Error(codes.Unauthenticated, "not authenticated")
+	}
+	return userID, nil
+}
 
 type SessionServer struct {
 	pb.UnimplementedSessionServiceServer
@@ -29,11 +38,16 @@ func (s *SessionServer) GetSession(ctx context.Context, req *pb.GetSessionReques
   if err := validate.ValidateGetSessionRequest(req); err != nil {
     return nil, err
   }
+  userID, err := userIDFromContext(ctx)
+  if err != nil {
+    return nil, err
+  }
 
   id := uuid.MustParse(req.Id)
 	var session model.Session
 	result := s.db.WithContext(ctx).
 		Preload("ExerciseSets.Exercise").
+		Where("user_id = ?", userID).
 		First(&session, id)
 
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -59,8 +73,13 @@ func (s *SessionServer) CreateSession(ctx context.Context, req *pb.CreateSession
   if err := validate.ValidateCreateSessionRequest(req); err != nil {
     return nil, err
   }
+  userID, err := userIDFromContext(ctx)
+  if err != nil {
+    return nil, err
+  }
 
   session := mapper.PBToSession(req)
+  session.UserID = &userID
 
   result := s.db.Create(session)
   if result.Error != nil {
@@ -79,9 +98,15 @@ func (s *SessionServer) ListRecentSessions(ctx context.Context, req *pb.ListRece
     limit = 100
   }
 
+  userID, err := userIDFromContext(ctx)
+  if err != nil {
+    return nil, err
+  }
+
   var sessions []model.Session
   result := s.db.WithContext(ctx).
     Preload("ExerciseSets.Exercise").
+    Where("user_id = ?", userID).
     Order("started_at DESC").
     Limit(limit).
     Find(&sessions)
@@ -112,10 +137,16 @@ func (s *SessionServer) GetLastSetsForExercise(ctx context.Context, req *pb.GetL
     return nil, status.Error(codes.InvalidArgument, "invalid exercise_id UUID")
   }
 
+  userID, err := userIDFromContext(ctx)
+  if err != nil {
+    return nil, err
+  }
+
   var latestSet model.ExerciseSet
   result := s.db.WithContext(ctx).
-    Where("exercise_id = ?", exerciseId).
-    Order("logged_at DESC").
+    Joins("JOIN sessions ON sessions.id = exercise_sets.session_id").
+    Where("exercise_sets.exercise_id = ? AND sessions.user_id = ?", exerciseId, userID).
+    Order("exercise_sets.logged_at DESC").
     First(&latestSet)
 
   if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -173,7 +204,16 @@ func (s *SessionServer) DeleteSession(ctx context.Context, req *pb.DeleteSession
     return nil, status.Error(codes.InvalidArgument, "invalid session id UUID")
   }
 
+  userID, uerr := userIDFromContext(ctx)
+  if uerr != nil {
+    return nil, uerr
+  }
+
   err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+    var session model.Session
+    if err := tx.Where("id = ? AND user_id = ?", id, userID).First(&session).Error; err != nil {
+      return err
+    }
     if err := tx.Where("session_id = ?", id).Delete(&model.ExerciseSet{}).Error; err != nil {
       return err
     }
@@ -203,6 +243,23 @@ func (s *SessionServer) UpdateExerciseSet(ctx context.Context, req *pb.UpdateExe
   id, err := uuid.Parse(req.Id)
   if err != nil {
     return nil, status.Error(codes.InvalidArgument, "invalid set id UUID")
+  }
+
+  userID, err := userIDFromContext(ctx)
+  if err != nil {
+    return nil, err
+  }
+
+  // Ensure the set belongs to a session owned by the current user
+  var owningSet model.ExerciseSet
+  if err := s.db.WithContext(ctx).
+    Joins("JOIN sessions ON sessions.id = exercise_sets.session_id").
+    Where("exercise_sets.id = ? AND sessions.user_id = ?", id, userID).
+    First(&owningSet).Error; err != nil {
+    if errors.Is(err, gorm.ErrRecordNotFound) {
+      return nil, status.Error(codes.NotFound, "set not found")
+    }
+    return nil, status.Errorf(codes.Internal, "failed to look up set: %v", err)
   }
 
   updates := map[string]any{

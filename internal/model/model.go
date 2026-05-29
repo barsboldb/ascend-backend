@@ -45,8 +45,17 @@ type ProgramExercise struct {
 	Exercise        Exercise  `gorm:"foreignKey:ExerciseID"`
 }
 
+type User struct {
+	ID           uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	Email        string    `gorm:"uniqueIndex;not null"`
+	PasswordHash string    `gorm:"not null"`
+	Name         *string
+	CreatedAt    time.Time
+}
+
 type Session struct {
 	ID           uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	UserID       *uuid.UUID `gorm:"type:uuid;index"`
 	ProgramDayID uuid.UUID  `gorm:"type:uuid;not null"`
 	WeekNumber   int32      `gorm:"not null"`
 	StartedAt    time.Time  `gorm:"not null"`

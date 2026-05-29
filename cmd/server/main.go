@@ -10,8 +10,10 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	authpb "github.com/barsboldb/ascend-backend/gen/auth"
 	programpb "github.com/barsboldb/ascend-backend/gen/program"
 	sessionpb "github.com/barsboldb/ascend-backend/gen/session"
+	"github.com/barsboldb/ascend-backend/internal/auth"
 	"github.com/barsboldb/ascend-backend/internal/server"
 )
 
@@ -31,7 +33,8 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(auth.UnaryInterceptor))
+	authpb.RegisterAuthServiceServer(grpcServer, server.NewAuthServer(db))
 	sessionpb.RegisterSessionServiceServer(grpcServer, server.NewSessionServer(db))
 	programpb.RegisterProgramServiceServer(grpcServer, server.NewProgramServer(db))
 	reflection.Register(grpcServer)
