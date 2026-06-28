@@ -22,6 +22,41 @@ func NewProgramServer(db *gorm.DB) *ProgramServer {
 	return &ProgramServer{db: db}
 }
 
+func (s *ProgramServer) ListPrograms(ctx context.Context, req *pb.ListProgramsRequest) (*pb.ListProgramsResponse, error) {
+	var programs []model.Program
+	if err := s.db.WithContext(ctx).Preload("Days").Find(&programs).Error; err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to list programs: %v", err)
+	}
+
+	resp := &pb.ListProgramsResponse{Programs: make([]*pb.GetProgramResponse, len(programs))}
+	for i := range programs {
+		p := &programs[i]
+		pbDays := make([]*pb.ProgramDay, len(p.Days))
+		for j, d := range p.Days {
+			pbDays[j] = &pb.ProgramDay{
+				Id:         d.ID.String(),
+				WeekNumber: d.WeekNumber,
+				DayNumber:  d.DayNumber,
+				Label:      d.Label,
+			}
+		}
+		entry := &pb.GetProgramResponse{
+			Id:        p.ID.String(),
+			Name:      p.Name,
+			CreatedAt: timestamppb.New(p.CreatedAt),
+			Days:      pbDays,
+		}
+		if p.Description != nil {
+			entry.Description = *p.Description
+		}
+		if p.TotalWeeks != nil {
+			entry.TotalWeeks = *p.TotalWeeks
+		}
+		resp.Programs[i] = entry
+	}
+	return resp, nil
+}
+
 func (s *ProgramServer) GetProgram(ctx context.Context, req *pb.GetProgramRequest) (*pb.GetProgramResponse, error) {
 	if req.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
